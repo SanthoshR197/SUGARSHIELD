@@ -1,0 +1,545 @@
+
+%%writefile /content/final.py
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit.runtime.caching.cache_data_api")
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit.runtime.scriptrunner_utils")
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score
+from xgboost import XGBRegressor
+import sqlite3
+from datetime import datetime, date
+import random
+import streamlit as st
+import bcrypt
+import os
+import time
+
+
+st.markdown("""
+    <style>
+    /* Green Theme */
+    .stApp {
+        background-color: #E8F5E9; /* Light green background */
+    }
+    .sidebar .sidebar-content {
+        background-color: #2E7D32; /* Forest green sidebar */
+        color: white;
+    }
+    .stButton>button {
+        background-color: #76FF03; /* Lime green buttons */
+        color: black;
+        border-radius: 10px;
+        border: none;
+        padding: 10px 20px;
+        font-weight: bold;
+    }
+    .stButton>button:hover {
+        background-color: #64DD17;
+    }
+    h1, h2, h3 {
+        color: #1B5E20; /* Dark green for headers */
+        font-family: 'Verdana', sans-serif;
+    }
+    /* Unique Header */
+    .header-title {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 36px;
+        color: #1B5E20;
+        text-align: center;
+        text-shadow: 2px 2px #76FF03;
+    }
+    /* Animations */
+    .pulse-button {
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+        100% { transform: scale(1); }
+    }
+    .fade-in {
+        animation: fadeIn 1s ease-in;
+    }
+    @keyframes fadeIn {
+        0% { opacity: 0; }
+        100% { opacity: 1; }
+    }
+    /* Table Styling */
+    .stTable table {
+        background-color: #FFFFFF; /* White background for the table */
+        color: #000000; /* Black text for readability */
+    }
+    .stTable th, .stTable td {
+        border: 1px solid #388E3C; /* Green border for table cells */
+        padding: 8px;
+    }
+    /* Override default gray backgrounds */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        background-color: #FFFFFF; /* White background for input fields */
+    }
+    .stSelectbox > div > div > div {
+        background-color: #FFFFFF; /* White background for selectbox */
+    }
+    /* Ensure text contrast */
+    .stMarkdown, .stText {
+        color: #000000; /* Black text for general readability */
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+
+conn = sqlite3.connect('sugar_shield.db', timeout=10)
+conn.execute('PRAGMA journal_mode=WAL')
+cursor = conn.cursor()
+
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id VARCHAR(10) PRIMARY KEY,
+        username VARCHAR(50) UNIQUE,
+        password VARCHAR(255),
+        age INT,
+        weight FLOAT,
+        start_date VARCHAR(10)
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS meal_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id VARCHAR(10),
+        plan_date VARCHAR(10),
+        meal_type VARCHAR(20),
+        meal_name TEXT,
+        carbs FLOAT,
+        proteins FLOAT,
+        fiber FLOAT,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS blood_sugar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id VARCHAR(10),
+        check_date VARCHAR(10),
+        glucose_level FLOAT,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+    )
+''')
+conn.commit()
+
+
+def load_data():
+    if os.path.exists('preprocessed_intake.csv') and os.path.exists('preprocessed_food.csv'):
+        intake_data = pd.read_csv('preprocessed_intake.csv')
+        food_data = pd.read_csv('preprocessed_food.csv')
+    else:
+        if not os.path.exists('diabetic_daily_intake.csv') or not os.path.exists('diabetic_friendly_food.csv'):
+            raise FileNotFoundError("Please upload diabetic_daily_intake.csv and diabetic_friendly_food.csv before running the app.")
+        intake_data = pd.read_csv('diabetic_daily_intake.csv')
+        food_data = pd.read_csv('diabetic_friendly_food.csv')
+        intake_data.rename(columns={
+            'Weight (kg)': 'Weight',
+            'Carbohydrates (g/day)': 'Carbohydrates',
+            'Proteins (g/day)': 'Proteins',
+            'Fiber (g/day)': 'Fiber'
+        }, inplace=True)
+        food_data.rename(columns={
+            'Breakfast_Carbohydrates(g)': 'Breakfast_Carbs',
+            'Breakfast_Proteins(g)': 'Breakfast_Proteins',
+            'Breakfast_Fiber(g)': 'Breakfast_Fiber',
+            'Lunch_Carbohydrates(g)': 'Lunch_Carbs',
+            'Lunch_Proteins(g)': 'Lunch_Proteins',
+            'Lunch_Fiber(g)': 'Lunch_Fiber',
+            'Dinner_Carbohydrates(g)': 'Dinner_Carbs',
+            'Dinner_Proteins(g)': 'Dinner_Proteins',
+            'Dinner_Fiber(g)': 'Dinner_Fiber',
+            'Snack_Carbohydrates(g)': 'Snack_Carbs',
+            'Snack_Proteins(g)': 'Snack_Proteins',
+            'Snack_Fiber(g)': 'Snack_Fiber'
+        }, inplace=True)
+
+        nutrient_cols = [
+            'Breakfast_Carbs', 'Breakfast_Proteins', 'Breakfast_Fiber',
+            'Lunch_Carbs', 'Lunch_Proteins', 'Lunch_Fiber',
+            'Dinner_Carbs', 'Dinner_Proteins', 'Dinner_Fiber',
+            'Snack_Carbs', 'Snack_Proteins', 'Snack_Fiber'
+        ]
+        for col in nutrient_cols:
+            food_data[col] = pd.to_numeric(food_data[col], errors='coerce')
+        food_data.dropna(subset=nutrient_cols, inplace=True)
+        intake_data.to_csv('preprocessed_intake.csv', index=False)
+        food_data.to_csv('preprocessed_food.csv', index=False)
+    return intake_data, food_data
+
+
+import pickle
+@st.cache_resource
+def train_model(intake_data):
+    if os.path.exists('trained_model.pkl'):
+        with open('trained_model.pkl', 'rb') as f: model = pickle.load(f)
+        with open('scaler_X.pkl', 'rb') as f: scaler_X = pickle.load(f)
+        with open('scaler_y.pkl', 'rb') as f: scaler_y = pickle.load(f)
+        with open('rmse_r2.pkl', 'rb') as f: rmse, r2 = pickle.load(f)
+    else:
+        X = intake_data[['Age', 'Weight']]
+        y = intake_data[['Carbohydrates', 'Proteins', 'Fiber']]
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
+        X_scaled = scaler_X.fit_transform(X)
+        y_scaled = scaler_y.fit_transform(y)
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_scaled, test_size=0.2, random_state=42)
+        model = XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred_scaled = model.predict(X_test)
+        y_pred = scaler_y.inverse_transform(y_pred_scaled)
+        y_test_original = scaler_y.inverse_transform(y_test)
+        rmse = np.sqrt(mean_squared_error(y_test_original, y_pred, multioutput='raw_values'))
+        r2 = r2_score(y_test_original, y_pred, multioutput='raw_values')
+        with open('trained_model.pkl', 'wb') as f: pickle.dump(model, f)
+        with open('scaler_X.pkl', 'wb') as f: pickle.dump(scaler_X, f)
+        with open('scaler_y.pkl', 'wb') as f: pickle.dump(scaler_y, f)
+        with open('rmse_r2.pkl', 'wb') as f: pickle.dump((rmse, r2), f)
+    return model, scaler_X, scaler_y, rmse, r2
+
+
+def signup(username, password, age, weight):
+    user_id = str(random.randint(10000, 99999))
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    start_date = datetime.now().date().isoformat()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        cursor.execute('INSERT INTO users (user_id, username, password, age, weight, start_date) VALUES (?, ?, ?, ?, ?, ?)', (user_id, username, hashed_password, age, weight, start_date))
+        conn.commit()
+        # Verify user was created
+        cursor.execute('SELECT user_id, username, password FROM users WHERE username = ?', (username,))
+        result = cursor.fetchone()
+        if result:
+            st.write(f"Debug: User created - user_id: {result[0]}, username: {result[1]}, hashed_password: {result[2]}")
+        else:
+            st.error("Debug: User creation failed - not found in database after insert.")
+            return None
+        return user_id
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        st.error(f"Database error during signup: {str(e)}")
+        return None
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        st.error("Username already exists.")
+        return None
+
+def login(username, password):
+    cursor.execute('SELECT user_id, password FROM users WHERE username = ?', (username,))
+    result = cursor.fetchone()
+    if result:
+        stored_hashed_password = result[1]
+        st.write(f"Debug: User found - username: {username}, stored hashed password: {stored_hashed_password}")
+        if bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password.encode('utf-8')):
+            st.write("Debug: Password match successful.")
+            return (True, result[0])
+        else:
+            st.write("Debug: Password does not match.")
+    else:
+        st.write(f"Debug: User not found - username: {username}")
+    st.error("Invalid username or password. If you haven't signed up, please do so on the Sign Up tab.")
+    return (False, "Invalid username or password.")
+
+def load_user(user_id):
+    if not user_id:
+        return None
+    cursor.execute('SELECT age, weight, start_date FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    if result:
+        return {'age': result[0], 'weight': result[1], 'start_date': datetime.fromisoformat(result[2]).date()}
+    return None
+
+
+def generate_meal_plan(user_id, model, scaler_X, scaler_y, food_data, plan_date=None):
+    user = load_user(user_id)
+    if not user:
+        return None, "User not found!"
+    age, weight = user['age'], user['weight']
+    if plan_date is None:
+        plan_date = datetime.now().date()
+    days_passed = (plan_date - user['start_date']).days
+    if days_passed > 30:
+        return None, "30-day cycle complete. Please update your details or check blood sugar."
+    input_scaled = scaler_X.transform([[age, weight]])
+    predicted_scaled = model.predict(input_scaled)
+    predicted = scaler_y.inverse_transform(predicted_scaled)[0]
+    carbs, proteins, fiber = predicted
+
+
+    try:
+        cursor.execute('SELECT meal_type, meal_name, carbs, proteins, fiber FROM meal_plans WHERE user_id = ? AND plan_date = ?', (user_id, plan_date.isoformat()))
+        existing_plan = cursor.fetchall()
+    except sqlite3.Error as e:
+        st.error(f"Database error while fetching meal plan: {str(e)}")
+        return None, "Failed to load existing meal plan."
+
+    if existing_plan:
+        meal_plan = {}
+        for meal_type, meal_name, c, p, f in existing_plan:
+            meal_plan[meal_type] = pd.Series({meal_type: meal_name, f'{meal_type}_Carbs': c, f'{meal_type}_Proteins': p, f'{meal_type}_Fiber': f})
+        return meal_plan, (carbs, proteins, fiber)
+
+
+    meal_plan = {}
+    meals = ['Breakfast', 'Lunch', 'Dinner', 'Snack']
+    target_carbs = carbs / len(meals)
+    target_proteins = proteins / len(meals)
+    target_fiber = fiber / len(meals)
+
+
+    for meal in meals:
+        df = food_data[[meal, f'{meal}_Carbs', f'{meal}_Proteins', f'{meal}_Fiber']].dropna()
+        df = df[(df[f'{meal}_Carbs'].between(target_carbs * 0.8, target_carbs * 1.2)) &
+                (df[f'{meal}_Proteins'].between(target_proteins * 0.8, target_proteins * 1.2)) &
+                (df[f'{meal}_Fiber'].between(target_fiber * 0.8, target_fiber * 1.2))]
+        if df.empty:
+            df = food_data[[meal, f'{meal}_Carbs', f'{meal}_Proteins', f'{meal}_Fiber']].dropna()
+        selected = df.sample(n=1).iloc[0]
+        meal_plan[meal] = selected.copy()
+
+
+    total_carbs = sum(meal_plan[meal][f'{meal}_Carbs'] for meal in meals)
+    total_proteins = sum(meal_plan[meal][f'{meal}_Proteins'] for meal in meals)
+    total_fiber = sum(meal_plan[meal][f'{meal}_Fiber'] for meal in meals)
+
+    scale_carbs = carbs / total_carbs if total_carbs > 0 else 1
+    scale_proteins = proteins / total_proteins if total_proteins > 0 else 1
+    scale_fiber = fiber / total_fiber if total_fiber > 0 else 1
+    scale = min(scale_carbs, scale_proteins, scale_fiber)
+
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn.execute('BEGIN TRANSACTION')
+            for meal in meals:
+                meal_plan[meal][f'{meal}_Carbs'] *= scale
+                meal_plan[meal][f'{meal}_Proteins'] *= scale
+                meal_plan[meal][f'{meal}_Fiber'] *= scale
+                meal_plan[meal][f'{meal}_Carbs'] = min(meal_plan[meal][f'{meal}_Carbs'], carbs * 1.05 / len(meals))
+                meal_plan[meal][f'{meal}_Proteins'] = min(meal_plan[meal][f'{meal}_Proteins'], proteins * 1.05 / len(meals))
+                meal_plan[meal][f'{meal}_Fiber'] = min(meal_plan[meal][f'{meal}_Fiber'], fiber * 1.05 / len(meals))
+                cursor.execute('INSERT INTO meal_plans (user_id, plan_date, meal_type, meal_name, carbs, proteins, fiber) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                               (user_id, plan_date.isoformat(), meal, meal_plan[meal][meal],
+                                float(meal_plan[meal][f'{meal}_Carbs']), float(meal_plan[meal][f'{meal}_Proteins']), float(meal_plan[meal][f'{meal}_Fiber'])))
+            conn.commit()
+            break
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                time.sleep(1)
+                continue
+            else:
+                st.error(f"Database error while saving meal plan: {str(e)}")
+                return None, "Failed to save meal plan."
+    return meal_plan, (carbs, proteins, fiber)
+
+
+def record_blood_sugar(user_id, glucose_level):
+    check_date = datetime.now().date().isoformat()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        cursor.execute('INSERT INTO blood_sugar (user_id, check_date, glucose_level) VALUES (?, ?, ?)', (user_id, check_date, float(glucose_level)))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        if "database is locked" in str(e):
+            st.error("Database is locked. Please try again.")
+        return "Failed to record blood sugar."
+    if glucose_level < 70:
+        return "Low blood sugar detected. Consult a doctor."
+    elif 70 <= glucose_level <= 130:
+        return "Blood sugar in normal range. Keep up the good work!"
+    else:
+        return "High blood sugar detected. Review your diet or consult a doctor."
+
+
+quotes = [
+    "Take control of your health—one balanced meal at a time!",
+    "Small dietary changes today lead to a healthier tomorrow.",
+    "You’ve got this! Every healthy choice counts.",
+    "Stay strong—your body deserves the best care.",
+    "Embrace the journey to wellness with every bite."
+]
+
+
+def main():
+    
+    st.markdown('<div class="header-title">🛡️ Sugar Shield </div>', unsafe_allow_html=True)
+    quote_index = datetime.now().day % len(quotes)
+    st.markdown(f"<p style='text-align: center; font-style: italic; color: #388E3C;'>{quotes[quote_index]}</p>", unsafe_allow_html=True)
+    if 'conn' not in globals() or conn is None:
+        st.error("Cannot connect to the database. Please check the setup.")
+        return
+    intake_data, food_data = load_data()
+    model, scaler_X, scaler_y, rmse, r2 = train_model(intake_data)
+
+
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    if 'username' not in st.session_state:
+        st.session_state.username = None
+    if 'page' not in st.session_state:
+        st.session_state.page = "Login/Signup"
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+
+
+    if st.session_state.page != "Login/Signup" and (not st.session_state.user_id or not st.session_state.logged_in):
+        st.warning("Please log in to access this page.")
+        st.session_state.page = "Login/Signup"
+        st.session_state.logged_in = False
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.rerun()
+    elif st.session_state.page != "Login/Signup":
+        user = load_user(st.session_state.user_id)
+        if not user:
+            st.warning("Session expired or user not found. Please log in again.")
+            st.session_state.page = "Login/Signup"
+            st.session_state.logged_in = False
+            st.session_state.user_id = None
+            st.session_state.username = None
+            st.rerun()
+
+    with st.sidebar:
+        st.markdown(f"<h3>Welcome, {st.session_state.username if st.session_state.username else 'Guest'}!</h3>", unsafe_allow_html=True)
+        if st.session_state.logged_in and st.session_state.user_id:
+            page = st.selectbox("Navigate", ["Meal Planning", "Blood Sugar Tracking", "Logout"], key="nav_selectbox")
+            st.session_state.page = page
+        else:
+            st.session_state.page = "Login/Signup"
+
+
+    with st.expander("View Database (Debug)", expanded=False):
+        st.write("### Users Table")
+        cursor.execute('SELECT user_id, username, age, weight, start_date FROM users')
+        users = cursor.fetchall()
+        if users:
+            df = pd.DataFrame(users, columns=['User ID', 'Username', 'Age', 'Weight', 'Start Date'])
+            st.table(df)
+        else:
+            st.write("No users found in the database.")
+
+
+    if st.session_state.page == "Login/Signup":
+        tab1, tab2 = st.tabs(["Login", "Sign Up"])
+        with tab1:
+            st.subheader("Login")
+            username = st.text_input("Username", key="login_username")
+            password = st.text_input("Password", type="password", key="login_password")
+            if st.button("Login"):
+                success, result = login(username, password)
+                if success:
+                    st.session_state.user_id = result
+                    st.session_state.username = username
+                    st.session_state.logged_in = True
+                    st.session_state.page = "Meal Planning"
+                    st.success("Logged in successfully!")
+                    st.rerun()
+        with tab2:
+            st.subheader("Sign Up")
+            new_username = st.text_input("New Username", key="signup_username")
+            new_password = st.text_input("New Password", type="password", key="signup_password")
+            age = st.number_input("Age", min_value=1, max_value=120, step=1)
+            weight = st.number_input("Weight (kg)", min_value=30.0, max_value=200.0, step=0.1)
+            if st.button("Sign Up"):
+                user_id = signup(new_username, new_password, age, weight)
+                if user_id:
+                    st.session_state.user_id = user_id
+                    st.session_state.username = new_username
+                    st.session_state.logged_in = True
+                    st.session_state.page = "Meal Planning"
+                    st.success("Signed up successfully! You are now logged in.")
+                    st.rerun()
+
+    elif st.session_state.page == "Meal Planning":
+        st.subheader("Meal Planning")
+        st.write("### Your Predicted Daily Nutritional Needs:")
+        plan_date = datetime.now().date()
+        meal_plan, nutrients = generate_meal_plan(st.session_state.user_id, model, scaler_X, scaler_y, food_data, plan_date)
+        if isinstance(nutrients, str):
+            st.warning(nutrients)
+            if st.button("Update Profile"):
+                new_age = st.number_input("New Age", min_value=1, max_value=120, step=1, key="update_age")
+                new_weight = st.number_input("New Weight (kg)", min_value=30.0, max_value=200.0, step=0.1, key="update_weight")
+                if st.button("Save Updates"):
+                    try:
+                        conn.execute('BEGIN TRANSACTION')
+                        cursor.execute('UPDATE users SET age = ?, weight = ?, start_date = ? WHERE user_id = ?', (new_age, new_weight, datetime.now().date().isoformat(), st.session_state.user_id))
+                        conn.commit()
+                        st.success("Profile updated!")
+                        st.rerun()
+                    except sqlite3.OperationalError as e:
+                        conn.rollback()
+                        if "database is locked" in str(e):
+                            st.error("Database is locked. Please try again.")
+        else:
+            carbs, proteins, fiber = nutrients
+            st.write(f"- Carbohydrates: {carbs:.2f}g")
+            st.write(f"- Proteins: {proteins:.2f}g")
+            st.write(f"- Fiber: {fiber:.2f}g")
+            if st.button("Generate Meal Plan", key="generate_meal_plan", help="Click to generate your daily meal plan", type="primary"):
+                if meal_plan:
+                    st.markdown('<div class="fade-in">', unsafe_allow_html=True)
+                    st.write("### Today's Meal Plan")
+                    meal_data = []
+                    for idx, meal in enumerate(['Breakfast', 'Lunch', 'Dinner', 'Snack']):
+                        details = meal_plan[meal]
+                        meal_data.append({
+                            "Meal Type": meal,
+                            "Meal Name": details[meal],
+                            "Carbohydrates (g)": f"{details[f'{meal}_Carbs']:.2f}",
+                            "Proteins (g)": f"{details[f'{meal}_Proteins']:.2f}",
+                            "Fiber (g)": f"{details[f'{meal}_Fiber']:.2f}"
+                        })
+                    df = pd.DataFrame(meal_data)
+                    st.table(df)
+                    total_carbs = sum(float(row["Carbohydrates (g)"]) for row in meal_data)
+                    total_proteins = sum(float(row["Proteins (g)"]) for row in meal_data)
+                    total_fiber = sum(float(row["Fiber (g)"]) for row in meal_data)
+                    st.write(f"**Total Intake:** Carbohydrates: {total_carbs:.2f}g, Proteins: {total_proteins:.2f}g, Fiber: {total_fiber:.2f}g")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.error("Failed to generate meal plan. Please try again.")
+
+    elif st.session_state.page == "Blood Sugar Tracking":
+        st.subheader("Blood Sugar Tracking")
+        glucose_level = st.number_input("Enter Blood Sugar Level (mg/dL)", min_value=0.0, step=0.1)
+        if st.button("Record Blood Sugar"):
+            message = record_blood_sugar(st.session_state.user_id, glucose_level)
+            st.write(message)
+
+    elif st.session_state.page == "Logout":
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.session_state.logged_in = False
+        st.session_state.page = "Login/Signup"
+        st.success("Logged out successfully!")
+        st.rerun()
+
+if __name__ == "__main__":
+    main()
+
+
+def close_connection():
+    global conn
+    if 'conn' in globals() and conn:
+        try:
+            conn.commit()
+            conn.close()
+        except:
+            pass
+        finally:
+            conn = None
+
+import atexit
+atexit.register(close_connection)
