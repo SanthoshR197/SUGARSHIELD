@@ -1,0 +1,3 @@
+!npm install -g localtunnel --yes
+!streamlit run /content/final.py --server.port 8501 &>/dev/null &
+!npx localtunnel --port 8501
