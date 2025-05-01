@@ -1,0 +1,1 @@
+!pip install streamlit xgboost bcrypt pandas numpy scikit-learn -q
