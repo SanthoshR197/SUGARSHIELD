@@ -20,7 +20,7 @@ import time
 
 st.markdown("""
     <style>
-    /* Green Theme */
+    
     .stApp {
         background-color: #E8F5E9; /* Light green background */
     }
@@ -40,10 +40,10 @@ st.markdown("""
         background-color: #64DD17;
     }
     h1, h2, h3 {
-        color: #1B5E20; /* Dark green for headers */
+        color: #1B5E20; 
         font-family: 'Verdana', sans-serif;
     }
-    /* Unique Header */
+    
     .header-title {
         font-family: 'Courier New', Courier, monospace;
         font-size: 36px;
@@ -51,7 +51,7 @@ st.markdown("""
         text-align: center;
         text-shadow: 2px 2px #76FF03;
     }
-    /* Animations */
+   
     .pulse-button {
         animation: pulse 2s infinite;
     }
@@ -67,26 +67,26 @@ st.markdown("""
         0% { opacity: 0; }
         100% { opacity: 1; }
     }
-    /* Table Styling */
+    
     .stTable table {
-        background-color: #FFFFFF; /* White background for the table */
-        color: #000000; /* Black text for readability */
+        background-color: #FFFFFF; 
+        color: #000000; 
     }
     .stTable th, .stTable td {
-        border: 1px solid #388E3C; /* Green border for table cells */
+        border: 1px solid #388E3C; 
         padding: 8px;
     }
-    /* Override default gray backgrounds */
+    
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input {
-        background-color: #FFFFFF; /* White background for input fields */
+        background-color: #FFFFFF; 
     }
     .stSelectbox > div > div > div {
-        background-color: #FFFFFF; /* White background for selectbox */
+        background-color: #FFFFFF; 
     }
-    /* Ensure text contrast */
+    
     .stMarkdown, .stText {
-        color: #000000; /* Black text for general readability */
+        color: #000000; 
     }
     </style>
 """, unsafe_allow_html=True)
