@@ -1,4 +1,4 @@
-# SUGARSHIELD
+# SUGARSHIELD is is a dietary planner which is specifically made for diabetic patients which uses only minimal inputs(age and weight) and generate daily meal plan for the users and tracks their blood sugar for each a month time limit.
 1. Download the needed libraries
 2. Run the full code.
 3. Use the uploading dataset code and upload the datasets.
